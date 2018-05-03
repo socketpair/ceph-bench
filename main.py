@@ -54,7 +54,7 @@ def _cmd(cluster, cmd, **kwargs):
 
 def main():
     logging.basicConfig(level=logging.INFO)
-    conf = {'keyring': './keyring.conf'}
+    conf = {'keyring': 'keyring.conf'}
     pool = 'single'
     MODE = 'HOST'  # HOST or OSD
     secs = 10 # secs to benchmark
@@ -70,7 +70,7 @@ def main():
     if client != 'client':
         raise ValueError
 
-    log.debug('Attaching to CEPH cluster.')
+    log.info('Attaching to CEPH cluster. pool=%s, rados_id=%s', pool, rados_id)
     with rados.Rados(conffile='/etc/ceph/ceph.conf', rados_id=rados_id, conf=conf) as cluster:
         log.info('Getting map osd -> host.')
         #info = json.loads(subprocess.check_output(['ceph', 'osd', 'tree', '--format=json']).decode('utf-8'))
@@ -129,16 +129,16 @@ def main():
         with cluster.open_ioctx(pool) as ioctx:
             log.info('Start benchmarking of %d %ss. %d * 2 seconds each.', len(obj2info), MODE, secs)
             for (name, (hosts, acting)) in obj2info.items():
-                log.info('Benchmarking OSD %r (%r)', list(acting),list(hosts))
+                log.info('Benchmarking IOPS on OSD %r (%r)', list(acting),list(hosts))
                 delay, ops = do_bench(secs, name, ioctx, cycle([b'q', b'w']))
                 iops = ops / delay
                 lat = delay / ops # in sec
-
+                log.info('Benchmarking Linear write on OSD %r (%r) blocksize=%d MiB', list(acting),list(hosts), bytesperobj//(1024*1024))
                 delay, ops = do_bench(secs, name, ioctx, bigdata)
                 bsec = ops * bytesperobj / delay
 
                 log.info(
-                    'OSD %r (%r): %2.2f IOPS, lat=%.4f ms. %2.2f MB/sec (%2.2f MBit/s).',
+                    'OSD %r (%r): %2.2f IOPS, lat=%.4f ms. %2.2f MB/sec (%2.2f Mbit/s).',
                     list(acting),
                     list(hosts),
                     iops,
