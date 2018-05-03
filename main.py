@@ -34,17 +34,18 @@ def do_bench(secs, name, ioctx, data):
 def _cmd(cluster, cmd, **kwargs):
     target = ceph_argparse.find_cmd_target(cmd.split())
 
-    qwe = {
+    argdict = {
             'prefix': cmd,
             'target': target,
             'format': 'json',
     }
-    qwe.update(kwargs)
+    argdict.update(kwargs)
+    log.debug('Calling ceph: %r', argdict)
     ret, outbuf, outs = ceph_argparse.json_command(
         cluster,
         target=target,
         prefix=None,
-        argdict=qwe
+        argdict=argdict
     )
     if ret:
         raise RuntimeError(outs)
