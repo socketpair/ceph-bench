@@ -49,7 +49,7 @@ def _cmd(cluster, cmd, **kwargs):
     )
     if ret:
         raise RuntimeError(outs)
-    return json.loads(outbuf)
+    return json.loads(outbuf.decode('utf-8'))
 
 
 
