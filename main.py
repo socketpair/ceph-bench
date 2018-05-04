@@ -130,18 +130,18 @@ def main():
         with cluster.open_ioctx(pool) as ioctx:
             log.info('Start benchmarking of %d %ss. %d * 2 seconds each.', len(obj2info), MODE, secs)
             for (name, (hosts, acting)) in obj2info.items():
-                log.info('Benchmarking IOPS on OSD %r (%r)', list(acting),list(hosts))
+                log.debug('Benchmarking IOPS on OSD %r (%r)', list(acting), ','.join(hosts))
                 delay, ops = do_bench(secs, name, ioctx, cycle([b'q', b'w']))
                 iops = ops / delay
                 lat = delay / ops # in sec
-                log.info('Benchmarking Linear write on OSD %r (%r) blocksize=%d MiB', list(acting),list(hosts), bytesperobj//(1024*1024))
+                log.debug('Benchmarking Linear write on OSD %r (%r) blocksize=%d MiB', list(acting), ','.join(hosts), bytesperobj//(1024*1024))
                 delay, ops = do_bench(secs, name, ioctx, bigdata)
                 bsec = ops * bytesperobj / delay
 
                 log.info(
                     'OSD %r (%r): %2.2f IOPS, lat=%.4f ms. %2.2f MB/sec (%2.2f Mbit/s).',
                     list(acting),
-                    list(hosts),
+                     ','.join(hosts),
                     iops,
                     lat * 1000,
                     bsec / 1000000,
