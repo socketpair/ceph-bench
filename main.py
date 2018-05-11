@@ -1,27 +1,31 @@
 #!/usr/bin/python3
+
 import sys
 import json
 import argparse
 import logging
 import os
-import time
 import rados
-import configparser
 from itertools import cycle, count
 from pprint import pprint
 
 import ceph_argparse
 
+if sys.version_info >= (3,0):
+    from time import monotonic
+else:
+    from time import time as monotonic
+
 log = logging.getLogger(__name__)
 
 def do_bench(secs, name, ioctx, data):
-    b = a = time.monotonic()
+    b = a = monotonic()
     stop = a + secs
     ops = 0
     try:
         while b <= stop:
             ioctx.write(name, next(data))
-            b = time.monotonic()
+            b = monotonic()
             ops += 1
     finally:
         try:
@@ -64,15 +68,8 @@ def main():
 
     assert MODE in ('HOST', 'OSD')
 
-    # TODO: ugly code. pass whole client name, not rados_id to Rados constructor
-    config = configparser.ConfigParser()
-    config.read(conf['keyring'])
-    (client, rados_id) = config.sections()[0].split('.')
-    if client != 'client':
-        raise ValueError
-
-    log.info('Attaching to CEPH cluster. pool=%s, rados_id=%s', pool, rados_id)
-    with rados.Rados(conffile='/etc/ceph/ceph.conf', rados_id=rados_id, conf=conf) as cluster:
+    log.info('Attaching to CEPH cluster. pool=%s', pool)
+    with rados.Rados(conffile='/etc/ceph/ceph.conf', conf=conf) as cluster:
         log.info('Getting map osd -> host.')
         #info = json.loads(subprocess.check_output(['ceph', 'osd', 'tree', '--format=json']).decode('utf-8'))
         info = _cmd(cluster, 'osd tree')
