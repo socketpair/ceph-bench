@@ -128,7 +128,7 @@ def get_description(cluster, location):
     elif result["osd_objectstore"] == 'bluestore':
         x = [
             'db=%s(%s)' % (result['bluefs_db_type'], result["bluefs_db_model"].rstrip()),
-            'dat=%s(%s)' % (result['bluefs_slow_type'], result["bluefs_slow_model"].rstrip()),
+            'dat=%s(%s)' % (result['bluestore_bdev_type'], result["bluestore_bdev_model"].rstrip()),
         ]
     else:
         x = []
