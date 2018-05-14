@@ -152,7 +152,7 @@ def main():
     mode = params.mode
     secs = params.duration
     bigsize = params.bigsize
-    smallsize = params.bigsize * 1024 * 1024
+    smallsize = params.smallsize
 
     bigdata = cycle([os.urandom(bigsize), os.urandom(bigsize)])
     smalldata = cycle([os.urandom(smallsize), os.urandom(smallsize)])
