@@ -1,4 +1,5 @@
 #!/usr/bin/python3
+# coding: utf-8
 
 import json
 import logging
@@ -127,7 +128,11 @@ def get_description(cluster, location):
 
 
 def main():
-    parser = ArgumentParser(formatter_class=ArgumentDefaultsHelpFormatter)
+    parser = ArgumentParser(
+        description="Socketair Ceph tester. You should create pool of size 1 and provide a keyring file with user having rights to write to this pool.",
+        formatter_class=ArgumentDefaultsHelpFormatter,
+        epilog="For all questions contact Коренберг Марк <socketpair@gmail.com> and/or Telegram user @socketpair, as well as @socketpair on GitHub."
+    )
     parser.add_argument('--debug', action='store_true', help='Enable debug mode.')
     parser.add_argument('--duration', type=int, default=10, help='Time limit for each test.', metavar='SECONDS')
     parser.add_argument('--bigsize', type=int, default=4 * 1024 * 1024, help='Size of object for linear write.',
