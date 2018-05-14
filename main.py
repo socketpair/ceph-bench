@@ -135,8 +135,8 @@ def get_description(cluster, location):
 
     return ' '.join(
         [
-            'loc=%s,%s,osd.%s' % (location['root'], location['host'], osd),
-            't=%s' % result["osd_objectstore"],
+            'r=%s,h=%s,osd.%s' % (location['root'], location['host'], osd),
+            result["osd_objectstore"],
         ] + x + [result['cpu']]
     )
 
