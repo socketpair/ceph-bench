@@ -53,7 +53,7 @@ def get_pool_size(cluster, pool):
     return result['size']
 
 
-def get_pg2acting_primary(cluster, pool):
+def get_osds(cluster, pool):
     (ret, outbuf, outs) = cluster.mgr_command(
         json.dumps({
             "prefix": "pg ls-by-pool",
@@ -67,7 +67,7 @@ def get_pg2acting_primary(cluster, pool):
     if ret:
         raise RuntimeError(outs)
     result = json.loads(outbuf.decode('utf-8'))
-    return {i['pgid']: i['acting_primary'] for i in result}
+    return {i['acting_primary'] for i in result}
 
 
 def get_osd_location(cluster, osd):
@@ -185,11 +185,9 @@ def main():
         if get_pool_size(cluster, pool) != 1:
             raise RuntimeError('Pool %r size must be 1.' % pool)
 
-        log.debug('Getting map of pg => acting_primary for pool %r.', pool)
-        pg2acting_primary = get_pg2acting_primary(cluster, pool)
-        # osds = sorted({j for i in pg2acting.values() for j in i})  # for 'acting' and size >= 1  (instead of acting_primary)
-        osds = sorted({i for i in pg2acting_primary.values()})  # since size is 1
-        log.debug('Got info about %d PGs. Total OSDs in this pool: %d.', len(pg2acting_primary), len(osds))
+        log.debug('Getting list of OSDs for pool %r.', pool)
+        osds = sorted(get_osds(cluster, pool))
+        log.debug('Total OSDs in this pool: %d.', len(osds))
 
         log.info('Getting OSD locations.')
         osd2location = {osd: get_osd_location(cluster, osd) for osd in osds}
