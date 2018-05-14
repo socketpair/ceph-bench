@@ -121,9 +121,14 @@ def get_description(cluster, location):
     result = json.loads(outbuf.decode('utf-8'))
 
     descr = location.copy()
-    descr["rot_journal"] = int(result["journal_rotational"]) == 1
-    descr["rot_data"] = int(result["rotational"]) == 1
+
     descr["type"] = result["osd_objectstore"]
+    if result["osd_objectstore"] == 'filestore':
+        descr["rot_journal"] = int(result["journal_rotational"]) == 1
+        descr["rot_data"] = int(result["rotational"]) == 1
+    elif result["osd_objectstore"] == 'bluestore':
+        descr["z_DB"] = '%s %s' % (result['bluefs_db_type'], result["bluefs_db_model"])
+        descr["z_main"] = '%s %s' % (result['bluefs_slow_type'], result["bluefs_slow_model"])
     return json.dumps(descr, sort_keys=True, ensure_ascii=False)
 
 
