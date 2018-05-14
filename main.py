@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import sys
+from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
 from itertools import cycle
 
 import rados
@@ -126,13 +127,33 @@ def get_description(cluster, location):
 
 
 def main():
-    logging.basicConfig(level=logging.INFO)
-    conf = {'keyring': 'keyring.conf'}
-    pool = 'qwe'
-    MODE = 'host'  # root, host, osd
-    secs = 3  # secs to benchmark
-    bytesperobj = 4 * 1024 * 1024
-    bigdata = cycle([os.urandom(bytesperobj), os.urandom(bytesperobj)])
+    parser = ArgumentParser(formatter_class=ArgumentDefaultsHelpFormatter)
+    parser.add_argument('--debug', action='store_true', help='Enable debug mode.')
+    parser.add_argument('--duration', type=int, default=10, help='Time limit for each test.', metavar='SECONDS')
+    parser.add_argument('--bigsize', type=int, default=4 * 1024 * 1024, help='Size of object for linear write.',
+                        metavar='BYTES')
+    parser.add_argument('--smallsize', type=int, default=1, help='Size of object for linear IOPS write test.',
+                        metavar='BYTES')
+    parser.add_argument('--keyring', type=str, default='./keyring.conf', help='Path to keyring file.', metavar='PATH')
+    parser.add_argument('pool', help='Ceph pool name.')
+    parser.add_argument('mode', default='host',
+                        help='Test item selection. Possible values: any key from crush location, e.g. "host", "root". And also special value "osd" to test each OSD.')
+
+    params = parser.parse_args()
+
+    logging.basicConfig(level=logging.DEBUG if params.debug else logging.INFO)
+    conf = {'keyring': params.keyring}
+    pool = params.pool
+    mode = params.mode
+    secs = params.duration
+    bigsize = params.bigsize
+    smallsize = params.bigsize * 1024 * 1024
+
+    bigdata = cycle([os.urandom(bigsize), os.urandom(bigsize)])
+    smalldata = cycle([os.urandom(smallsize), os.urandom(smallsize)])
+
+    if next(smalldata) == next(smalldata):
+        raise ValueError('You are looser.')
 
     log.info('Attaching to CEPH cluster. pool=%s', pool)
     with rados.Rados(conffile='/etc/ceph/ceph.conf', conf=conf) as cluster:
@@ -151,9 +172,9 @@ def main():
         log.info('Getting OSD locations.')
         osd2location = {osd: get_osd_location(cluster, osd) for osd in osds}
 
-        bench_items = set(v[MODE] for v in osd2location.values())
+        bench_items = set(v[mode] for v in osd2location.values())
         totlen = len(bench_items)
-        log.info('Figuring out object names for %d %ss.', totlen, MODE)
+        log.info('Figuring out object names for %d %ss.', totlen, mode)
         name2location = []
         cnt = 0
         while bench_items:
@@ -162,7 +183,7 @@ def main():
 
             osd = get_obj_acting_primary(cluster, pool, name)
             location = osd2location[osd]
-            bench_item = location[MODE]
+            bench_item = location[mode]
 
             if bench_item in bench_items:
                 bench_items.remove(bench_item)
@@ -174,30 +195,30 @@ def main():
 
         log.debug('Opening IO context for pool %s. Each benchmark will last %d secs.', pool, secs)
         with cluster.open_ioctx(pool) as ioctx:
-            log.info('Start write IOPS benchmarking of %d %ss.', len(name2location), MODE)
+            log.info('Start write IOPS benchmarking of %d %ss.', len(name2location), mode)
             for (name, bench_item, description) in name2location:
                 log.debug('Benchmarking write IOPS on %r', bench_item)
-                delay, ops = do_bench(secs, name, ioctx, cycle([b'q', b'w']))
+                delay, ops = do_bench(secs, name, ioctx, smalldata)
                 iops = ops / delay
                 lat = delay / ops  # in sec
                 log.info(
                     '%s %r: %2.2f IOPS, lat=%.4f ms. %s.',
-                    MODE,
+                    mode,
                     bench_item,
                     iops,
                     lat * 1000,
                     description,
                 )
 
-            log.info('Start Linear write benchmarking of %d %ss. blocksize=%d MiB.', len(name2location), MODE,
-                     bytesperobj // (1024 * 1024))
+            log.info('Start Linear write benchmarking of %d %ss. blocksize=%d MiB.', len(name2location), mode,
+                     bigsize // (1024 * 1024))
             for (name, bench_item, description) in name2location:
                 log.debug('Benchmarking Linear write on %r', bench_item)
                 delay, ops = do_bench(secs, name, ioctx, bigdata)
-                bsec = ops * bytesperobj / delay
+                bsec = ops * bigsize / delay
                 log.info(
                     '%s %r: %2.2f MB/sec (%2.2f Mbit/s). %s.',
-                    MODE,
+                    mode,
                     bench_item,
                     bsec / 1000000,
                     bsec * 8 / 1000000,
