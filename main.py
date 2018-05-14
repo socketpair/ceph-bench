@@ -120,16 +120,25 @@ def get_description(cluster, location):
         raise RuntimeError(outs)
     result = json.loads(outbuf.decode('utf-8'))
 
-    descr = location.copy()
-
-    descr["type"] = result["osd_objectstore"]
     if result["osd_objectstore"] == 'filestore':
-        descr["rot_journal"] = int(result["journal_rotational"]) == 1
-        descr["rot_data"] = int(result["rotational"]) == 1
+        x = [
+            'jrn=%s' % ('hdd' if int(result["journal_rotational"]) else 'ssd'),
+            'dat=%s' % ('hdd' if int(result["rotational"]) else 'ssd'),
+        ]
     elif result["osd_objectstore"] == 'bluestore':
-        descr["z_DB"] = '%s %s' % (result['bluefs_db_type'], result["bluefs_db_model"])
-        descr["z_main"] = '%s %s' % (result['bluefs_slow_type'], result["bluefs_slow_model"])
-    return json.dumps(descr, sort_keys=True, ensure_ascii=False)
+        x = [
+            'db=%s(%s)' % (result['bluefs_db_type'], result["bluefs_db_model"]),
+            'dat=%s(%s)' % (result['bluefs_slow_type'], result["bluefs_slow_model"]),
+        ]
+    else:
+        x = []
+
+    return ' '.join(
+        [
+            'loc=%s,%s,osd.%s' % (location['root'], location['host'], osd),
+            't=%s' % result["osd_objectstore"],
+        ] + x + [result['cpu']]
+    )
 
 
 def main():
@@ -151,7 +160,10 @@ def main():
 
     params = parser.parse_args()
 
-    logging.basicConfig(level=logging.DEBUG if params.debug else logging.INFO)
+    logging.basicConfig(
+        level=logging.DEBUG if params.debug else logging.INFO,
+        format='%(levelname)s:%(name)s:%(message)s' if params.debug else '%(message)s',
+    )
     conf = {'keyring': params.keyring}
     pool = params.pool
     mode = params.mode
