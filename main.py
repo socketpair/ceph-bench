@@ -130,6 +130,7 @@ def get_osd_location(cluster, osd):
     result = json.loads(outbuf.decode('utf-8'))
     result = result['crush_location']
     result['osd'] = osd
+    log.debug('Location of OSD %r is %r.', osd, result)
     return result
 
 
@@ -147,7 +148,9 @@ def get_obj_acting_primary(cluster, pool, name):
     if ret:
         raise RuntimeError(outs)
     result = json.loads(outbuf.decode('utf-8'))
-    return result['acting_primary']
+    acting_primary = result['acting_primary']
+    log.debug('Acting primary OSD %r (for object %r).', acting_primary, name)
+    return acting_primary
 
 
 def get_description(cluster, location):
