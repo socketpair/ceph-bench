@@ -301,10 +301,11 @@ def main():
 
                 iops = ops / elapsed
                 log.info(
-                    '%s %r: %2.2f IOPS, minlat=%.4f ms, maxlat=%.4f ms. %s.',
+                    '%s %r: %2.2f IOPS (%2.2f ops), minlat=%.4f ms, maxlat=%.4f ms. %s.',
                     mode,
                     bench_item,
                     iops,
+                    ops,
                     latencies[0] * 1000,
                     latencies[-1] * 1000,
                     description,
