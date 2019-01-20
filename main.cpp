@@ -1,4 +1,5 @@
 #include <chrono>
+#include <csignal>
 #include <iostream>
 #include <json/json.h>
 #include <librados.hpp>
@@ -7,6 +8,9 @@
 #include <string>
 #include <thread>
 #include <vector>
+
+#include "mysignals.h"
+#include "radosutil.h"
 
 using namespace librados;
 using namespace std;
@@ -116,20 +120,22 @@ static void print_breakdown(const vector<T> &summary, size_t thread_count) {
 // Called in a thread.
 static void _do_bench(unsigned int secs, const string &obj_name, IoCtx &ioctx,
                       vector<steady_clock::duration> *ops) {
-  auto b = steady_clock::now();
-  const auto stop = b + seconds(secs);
 
   //      cout<<"tt" <<ops<<endl;
 
   bufferlist bar1;
   bufferlist bar2;
   // interleave buffers
+  // TODO: 4096in order not to read on writer ! But anyway
+  // during test this block should be cached
   bar1.append("q");
   bar2.append("w");
 
-  // TODO: wait for SIGINT (!)
+  auto b = steady_clock::now();
+  const auto stop = b + seconds(secs);
   try {
     while (b <= stop) {
+      abort_if_signalled();
       if (ioctx.write_full(obj_name, ops->size() % 2 ? bar1 : bar2) < 0)
         throw "Write error";
       const auto b2 = steady_clock::now();
@@ -153,9 +159,24 @@ static void do_bench(unsigned int secs, const vector<string> &names,
     vector<vector<steady_clock::duration> *> listofopts;
 
     for (const auto &name : names) {
+
+      // TODO: memory leak on exception...
       auto results = new vector<steady_clock::duration>;
       listofopts.push_back(results);
+
+      sigset_t new_set;
+      sigset_t old_set;
+      sigfillset(&new_set);
+      int err;
+      if ((err = pthread_sigmask(SIG_SETMASK, &new_set, &old_set)))
+        throw std::system_error(err, std::system_category(),
+                                "Failed to set thread sigmask");
+
       threads.push_back(thread(_do_bench, secs, name, ref(ioctx), results));
+
+      if ((err = pthread_sigmask(SIG_SETMASK, &old_set, NULL)))
+        throw std::system_error(err, std::system_category(),
+                                "Failed to restore thread sigmask");
     }
 
     for (auto &th : threads)
@@ -177,104 +198,6 @@ static void do_bench(unsigned int secs, const vector<string> &names,
   print_breakdown(summary, names.size());
 }
 
-class RadosUtils {
-public:
-  RadosUtils(Rados *rados_)
-      : rados(rados_), json_reader(Json::Features::strictMode()) {}
-
-  unsigned int get_obj_acting_primary(const string &name, const string &pool) {
-
-    Json::Value cmd(Json::objectValue);
-    cmd["prefix"] = "osd map";
-    cmd["object"] = name;
-    cmd["pool"] = pool;
-
-    auto &&location = do_mon_command(cmd);
-
-    const auto &acting_primary = location["acting_primary"];
-    if (!acting_primary.isNumeric())
-      throw "Failed to get acting_primary";
-
-    return acting_primary.asUInt();
-  }
-
-  map<string, string> get_osd_location(unsigned int osd) {
-    Json::Value cmd(Json::objectValue);
-    cmd["prefix"] = "osd find";
-    cmd["id"] = osd;
-
-    auto &&location = do_mon_command(cmd);
-    const auto &crush = location["crush_location"];
-
-    map<string, string> result;
-
-    for (auto &&it = crush.begin(); it != crush.end(); ++it) {
-      result[it.name()] = it->asString();
-    }
-
-    result["osd"] = "osd." + to_string(osd);
-
-    return result;
-  }
-
-  set<unsigned int> get_osds(const string &pool) {
-    Json::Value cmd(Json::objectValue);
-    cmd["prefix"] = "pg ls-by-pool";
-    cmd["poolstr"] = pool;
-
-    const auto &&pgs = do_mon_command(cmd);
-
-    set<unsigned int> osds;
-
-    // TODO:
-    // auto const & x: container
-    // https://stackoverflow.com/questions/27307373/c-how-to-create-iterator-over-one-field-of-a-struct-vector
-    for (const auto &pg : pgs) {
-      const auto &primary = pg["acting_primary"];
-      if (!primary.isNumeric())
-        throw "Failed to get acting_primary";
-      osds.insert(primary.asUInt());
-    }
-
-    return osds;
-  }
-
-  unsigned int get_pool_size(const string &pool) {
-    Json::Value cmd(Json::objectValue);
-    cmd["prefix"] = "osd pool get";
-    cmd["pool"] = pool;
-    cmd["var"] = "size";
-
-    const auto &&v = do_mon_command(cmd);
-
-    return v["size"].asUInt();
-  }
-
-private:
-  Json::Value do_mon_command(Json::Value &cmd) {
-    int err;
-    bufferlist outbl;
-    string outs;
-    cmd["format"] = "json";
-    bufferlist inbl;
-    if ((err = rados->mon_command(json_writer.write(cmd), inbl, &outbl,
-                                  &outs)) < 0) {
-      cerr << "mon_command error: " << outs << endl;
-      throw "mon_command error";
-    }
-
-    Json::Value root;
-    if (!json_reader.parse(outbl.to_str(), root))
-      throw "JSON parse error";
-
-    return root;
-  }
-
-  Rados *rados;
-  Json::Reader json_reader;
-  Json::FastWriter json_writer;
-};
-
 static void _main(int argc, const char *argv[]) {
   struct {
     string pool;
@@ -285,7 +208,6 @@ static void _main(int argc, const char *argv[]) {
   } settings;
 
   Rados rados;
-
   int err;
   if ((err = rados.init("admin")) < 0) {
     cerr << "Failed to init: " << strerror(-err) << endl;
@@ -329,90 +251,87 @@ static void _main(int argc, const char *argv[]) {
   // https://tracker.ceph.com/issues/24114
   this_thread::sleep_for(milliseconds(100));
 
-  auto rados_utils = RadosUtils(&rados);
+  try {
+    auto rados_utils = RadosUtils(&rados);
 
-  if (rados_utils.get_pool_size(settings.pool) != 1)
-    throw "It's required to have pool size 1";
+    if (rados_utils.get_pool_size(settings.pool) != 1)
+      throw "It's required to have pool size 1";
 
-  map<unsigned int, map<string, string>> osd2location;
+    map<unsigned int, map<string, string>> osd2location;
 
-  set<string> bench_items; // node1, node2 ||| osd.1, osd.2, osd.3
+    set<string> bench_items; // node1, node2 ||| osd.1, osd.2, osd.3
 
-  for (const auto &osd : rados_utils.get_osds(settings.pool)) {
-    const auto &location = rados_utils.get_osd_location(osd);
+    for (const auto &osd : rados_utils.get_osds(settings.pool)) {
+      const auto &location = rados_utils.get_osd_location(osd);
 
-    // TODO: do not fill this map if specific_bench_item specified
-    osd2location[osd] = location;
+      // TODO: do not fill this map if specific_bench_item specified
+      osd2location[osd] = location;
 
-    const auto &qwe = location.at(settings.mode);
-    if (settings.specific_bench_item.empty() ||
-        qwe == settings.specific_bench_item) {
-      bench_items.insert(qwe);
-    }
-  }
-
-  // benchitem -> [name1, name2] ||| i.e. "osd.2" => ["obj1", "obj2"]
-  map<string, vector<string>> name2location;
-  unsigned int cnt = 0;
-
-  // for each bench_item find thread_count names.
-  // store every name in name2location = [bench_item, names, description]
-  const string prefix = "bench_";
-  while (bench_items.size()) {
-    string name = prefix + to_string(++cnt);
-
-    unsigned int osd = rados_utils.get_obj_acting_primary(name, settings.pool);
-
-    const auto &location = osd2location.at(osd);
-    const auto &bench_item = location.at(settings.mode);
-    if (!bench_items.count(bench_item))
-      continue;
-
-    auto &names = name2location[bench_item];
-    if (names.size() == settings.threads) {
-      bench_items.erase(bench_item);
-      continue;
+      const auto &qwe = location.at(settings.mode);
+      if (settings.specific_bench_item.empty() ||
+          qwe == settings.specific_bench_item) {
+        bench_items.insert(qwe);
+      }
     }
 
-    names.push_back(name);
+    // benchitem -> [name1, name2] ||| i.e. "osd.2" => ["obj1", "obj2"]
+    map<string, vector<string>> name2location;
+    unsigned int cnt = 0;
 
-    cout << name << " - " << bench_item << endl;
+    // for each bench_item find thread_count names.
+    // store every name in name2location = [bench_item, names, description]
+    const string prefix = "bench_";
+    while (bench_items.size()) {
+      string name = prefix + to_string(++cnt);
+
+      unsigned int osd =
+          rados_utils.get_obj_acting_primary(name, settings.pool);
+
+      const auto &location = osd2location.at(osd);
+      const auto &bench_item = location.at(settings.mode);
+      if (!bench_items.count(bench_item))
+        continue;
+
+      auto &names = name2location[bench_item];
+      if (names.size() == settings.threads) {
+        bench_items.erase(bench_item);
+        continue;
+      }
+
+      names.push_back(name);
+
+      cout << name << " - " << bench_item << endl;
+    }
+
+    IoCtx ioctx;
+
+    if (rados.ioctx_create(settings.pool.c_str(), ioctx) < 0)
+      throw "Failed to create ioctx";
+
+    for (const auto &p : name2location) {
+      const auto &bench_item = p.first;
+      const auto &obj_names = p.second;
+      cout << "Benching " << settings.mode << " " << bench_item << endl;
+      do_bench(settings.secs, obj_names, ioctx);
+    }
+  } catch (...) {
+    rados.watch_flush();
+    throw;
   }
-
-  IoCtx ioctx;
-  // TODO: cleanup
-  /*
-   * NOTE: be sure to call watch_flush() prior to destroying any IoCtx
-   * that is used for watch events to ensure that racing callbacks
-   * have completed.
-   */
-
-  if (rados.ioctx_create(settings.pool.c_str(), ioctx) < 0)
-    throw "Failed to create ioctx";
-
-  for (const auto &p : name2location) {
-    const auto &bench_item = p.first;
-    const auto &obj_names = p.second;
-    cout << "Benching " << settings.mode << " " << bench_item << endl;
-    do_bench(settings.secs, obj_names, ioctx);
-  }
+  rados.watch_flush();
 }
 
 int main(int argc, const char *argv[]) {
-  /*
-   * IoCtx p;
-   * rados.ioctx_create("my_pool", p);
-   * p->stat(&stats);
-
-
-   */
   try {
+    setup_signal_handlers();
     _main(argc, argv);
+  } catch (const AbortException &msg) {
+    cerr << "Test aborted" << endl;
+    return 1;
   } catch (const char *msg) {
     cerr << "Unhandled exception: " << msg << endl;
-    return 1;
+    return 2;
   }
-
   cout << "Exiting successfully." << endl;
   return 0;
 }

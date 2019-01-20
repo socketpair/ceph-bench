@@ -6,14 +6,14 @@ LDFLAGS += -pthread -lrados -ljsoncpp -lstdc++
 #CC=clang-6.0
 
 
-main: main.o
+main: main.o mysignals.o radosutil.o
 	$(CC) $^ -o $@ $(LDFLAGS)
 
 .cpp.o:
 	$(CC) $(CPPFLAGS) $(CXXFLAGS) -c $< -o $@
 
-indent: main.cpp
-	clang-format-6.0 -i main.cpp
+indent: *.cpp *.h
+	clang-format-6.0 -i $^
 
 builddep:
 	sudo apt install -y --no-install-recommends libjsoncpp-dev
