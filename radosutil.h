@@ -16,7 +16,7 @@ class Rados;
 
 class RadosUtils {
 public:
-  RadosUtils(librados::Rados *rados_);
+  explicit RadosUtils(librados::Rados *rados_);
   unsigned int get_obj_acting_primary(const std::string &name,
                                       const std::string &pool);
   std::map<std::string, std::string> get_osd_location(unsigned int osd);

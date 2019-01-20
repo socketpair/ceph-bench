@@ -1,7 +1,7 @@
 # -fsanitize=undefined
 CXXFLAGS += -std=c++11 -O3 -Wall -Wextra -I/usr/include/rados -I/usr/include/jsoncpp
 #-Wa,-adhln -g
-LDFLAGS += -pthread -lrados -ljsoncpp -lstdc++
+LDFLAGS += -pthread -lrados -ljsoncpp -lstdc++ -lm
 
 #CC=clang-6.0
 

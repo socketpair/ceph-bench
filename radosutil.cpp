@@ -14,6 +14,8 @@ RadosUtils::RadosUtils(Rados *rados_)
       json_writer(new Json::FastWriter())                          /* */
 {}
 
+// RadosUtils::~RadosUtils() {}
+
 unsigned int RadosUtils::get_obj_acting_primary(const string &name,
                                                 const string &pool) {
 

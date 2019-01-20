@@ -1,13 +1,17 @@
 #include <chrono>
+#include <cmath>
 #include <csignal>
 #include <iostream>
-#include <json/json.h>
 #include <librados.hpp>
 #include <map>
 #include <set>
 #include <string>
+#include <sys/random.h>
 #include <thread>
 #include <vector>
+
+// TODO: RMOVE IT !
+#include <json/json.h>
 
 #include "mysignals.h"
 #include "radosutil.h"
@@ -24,113 +28,114 @@ template <class T> static double dur2msec(const T &dur) {
   return duration_cast<duration<double, milli>>(dur).count();
 }
 
+template <class T> static uint64_t dur2nsec(const T &dur) {
+  return duration_cast<duration<uint64_t, nano>>(dur).count();
+}
+
 template <class T>
-static void print_breakdown(const vector<T> &summary, size_t thread_count) {
+static void print_breakdown(const vector<T> &summary, size_t thread_count,
+                            size_t blocksize) {
 
   T totaltime(0);
 
   map<size_t, size_t> dur2count;
   map<size_t, T> dur2totaltime;
-  static const size_t usecs[] = {
-      100,   200,   300,   400,   500,   600,   700,   800,    900,       1000,
-      2000,  3000,  4000,  5000,  6000,  7000,  8000,  9000,   10000,     20000,
-      30000, 40000, 50000, 60000, 70000, 80000, 90000, 100000, 1000000000};
-
-  for (const auto &m : usecs) {
-    dur2count[m] = 0;
-    dur2totaltime[m] = T(0);
-  }
 
   T mindur(minutes(42));
   T maxdur(0);
+  size_t maxcount = 0;
   for (const auto &res : summary) {
     totaltime += res;
     if (res > maxdur)
       maxdur = res;
     if (res < mindur)
       mindur = res;
-    for (const auto &m : usecs) {
-      if (res <= microseconds(m)) {
-        dur2count.at(m)++;
-        dur2totaltime.at(m) += res;
-        break;
-      }
-    }
+
+    const auto nsec = dur2nsec(res);
+    const size_t baserange = powl(10, size_t(log10((long double)nsec)));
+    const size_t range = (nsec / baserange) * baserange;
+
+    const auto cnt = ++(dur2count[range]);
+    if (cnt > maxcount)
+      maxcount = cnt;
+
+    dur2totaltime[range] += res;
   }
 
   cout << "min delay " << dur2msec(mindur) << " msec." << endl;
   cout << "max delay " << dur2msec(maxdur) << " msec." << endl;
 
-  // skip first counters equal zero
-  auto b = dur2count.begin();
-  while (b != dur2count.end() && !b->second)
-    b++;
-
-  // skip last counters equal zero
-  auto e = dur2count.end();
-  if (e != b) {
-    e--;
-    while (e != b && !e->second)
-      e--;
-    e++;
-  }
-
-  size_t maxcount = 0;
-  for (auto p = b; p != e; p++) {
-    const auto &usecgroup = p->first;
-    const auto &count = p->second;
-    //      const auto &timespent = dur2totaltime.at(usecgroup);
-
-    if (count > maxcount)
-      maxcount = count;
-
-    auto bar = std::string(count * 70 / summary.size(), '#');
-    if (usecgroup == 1000000000)
-      cout << ">   100";
-    else
-      cout << "<=" << setw(5) << usecgroup / 1000.0;
-    cout << " ms: " << setw(3) << count * 100 / summary.size() << "% " << bar
-         << " cnt=" << count;
-    //     cout << " (" << (count * thread_count) / dur2sec(timespent)
-    //           << " IOPS)";
-    cout << endl;
-  }
-
   size_t sum = 0;
   T sumtime(0);
-  for (auto p = b; p != e; p++) {
-    const auto &usecgroup = p->first;
-    const auto &count = p->second;
+  const size_t maxbarsize = 30;
+
+  auto x = [blocksize](size_t count, T dur) -> void {
+    cout << " cnt=" << count;
+    cout << ", ";
+    cout << (count / dur2sec(dur)) << " IOPS";
+    cout << ", ";
+    cout << (count * blocksize / (dur2sec(dur) * 1000000.0)) << " MB/s";
+    cout << ", ";
+    cout << (count * blocksize * 8 / (dur2sec(dur) * 1000000.0)) << " Mb/s";
+  };
+
+  for (const auto &p : dur2count) {
+    const auto &nsecgrp = p.first;
+    const auto &count = p.second;
+    const auto barsize = count * maxbarsize / maxcount;
+
+    auto bar = string(barsize, '#') + string(maxbarsize - barsize, ' ');
+    cout << ">=" << setw(5) << nsecgrp / 1000000.0;
+    cout << " ms: " << setw(3) << count * 100 / summary.size() << "% " << bar;
+    x(count, dur2totaltime.at(nsecgrp));
+    cout << endl;
     if (count > maxcount / 100.0) {
       sum += count;
-      sumtime += dur2totaltime.at(usecgroup);
+      sumtime += dur2totaltime.at(nsecgrp);
     }
   }
 
   cout << "ops: " << (summary.size() * thread_count) / dur2sec(totaltime)
        << endl;
 
-  cout << "ops (count > 0.01 of max): "
-       << (sum * thread_count) / dur2sec(sumtime) << endl;
+  cout << "ops (count > 0.01 of max): ";
+  x(sum * thread_count, sumtime);
+  cout << endl;
 
   if (thread_count > 1)
     cout << "ops per thread: " << summary.size() / dur2sec(totaltime) << endl;
 }
 
-// Called in a thread.
+static void fill_urandom(void *buf_, size_t len) {
+  char *buf = static_cast<char *>(buf_);
+  while (len) {
+    ssize_t res;
+    if ((res = getrandom(buf, len, 0)) == -1)
+      throw system_error(errno, system_category(),
+                         "Failed to get random bytes");
+    buf += res;
+    len -= res;
+  }
+}
+
+// May be called in a thread.
 static void _do_bench(unsigned int secs, const string &obj_name, IoCtx &ioctx,
-                      vector<steady_clock::duration> *ops) {
+                      vector<steady_clock::duration> *ops, size_t block_size) {
 
-  //      cout<<"tt" <<ops<<endl;
-
+  // TODO: pass bufferlist as arguments
   bufferlist bar1;
   bufferlist bar2;
-  // interleave buffers
-  // TODO: 4096in order not to read on writer ! But anyway
-  // during test this block should be cached
-  bar1.append("q");
-  bar2.append("w");
 
+  bar1.append(ceph::buffer::create(block_size));
+  fill_urandom(bar1.c_str(), block_size);
+
+  bar2.append(ceph::buffer::create(block_size));
+  fill_urandom(bar2.c_str(), block_size);
+
+  if (bar1 == bar2)
+    throw "You are looser";
+
+  //  utime_t end = ceph_clock_now(); ?!
   auto b = steady_clock::now();
   const auto stop = b + seconds(secs);
   try {
@@ -150,7 +155,7 @@ static void _do_bench(unsigned int secs, const string &obj_name, IoCtx &ioctx,
 }
 
 static void do_bench(unsigned int secs, const vector<string> &names,
-                     IoCtx &ioctx) {
+                     IoCtx &ioctx, size_t block_size) {
 
   vector<steady_clock::duration> summary;
 
@@ -172,7 +177,8 @@ static void do_bench(unsigned int secs, const vector<string> &names,
         throw std::system_error(err, std::system_category(),
                                 "Failed to set thread sigmask");
 
-      threads.push_back(thread(_do_bench, secs, name, ref(ioctx), results));
+      threads.push_back(
+          thread(_do_bench, secs, name, ref(ioctx), results, block_size));
 
       if ((err = pthread_sigmask(SIG_SETMASK, &old_set, NULL)))
         throw std::system_error(err, std::system_category(),
@@ -193,9 +199,9 @@ static void do_bench(unsigned int secs, const vector<string> &names,
       delete res;
     }
   } else {
-    _do_bench(secs, names.at(0), ioctx, &summary);
+    _do_bench(secs, names.at(0), ioctx, &summary, block_size);
   }
-  print_breakdown(summary, names.size());
+  print_breakdown(summary, names.size(), block_size);
 }
 
 static void _main(int argc, const char *argv[]) {
@@ -205,24 +211,8 @@ static void _main(int argc, const char *argv[]) {
     string specific_bench_item;
     unsigned int threads;
     unsigned int secs;
+    size_t block_size;
   } settings;
-
-  Rados rados;
-  int err;
-  if ((err = rados.init("admin")) < 0) {
-    cerr << "Failed to init: " << strerror(-err) << endl;
-    throw "Failed to init";
-  }
-
-  if ((err = rados.conf_read_file("/etc/ceph/ceph.conf")) < 0) {
-    cerr << "Failed to read conf file: " << strerror(-err) << endl;
-    throw "Failed to read conf file";
-  }
-
-  if ((err = rados.conf_parse_argv(argc, argv)) < 0) {
-    cerr << "Failed to parse argv: " << strerror(-err) << endl;
-    throw "Failed to parse argv";
-  }
 
   switch (argc) {
   case 3:
@@ -242,6 +232,24 @@ static void _main(int argc, const char *argv[]) {
 
   settings.secs = 10;
   settings.threads = 1;
+  settings.block_size = 4096;
+
+  Rados rados;
+  int err;
+  if ((err = rados.init("admin")) < 0) {
+    cerr << "Failed to init: " << strerror(-err) << endl;
+    throw "Failed to init";
+  }
+
+  if ((err = rados.conf_read_file("/etc/ceph/ceph.conf")) < 0) {
+    cerr << "Failed to read conf file: " << strerror(-err) << endl;
+    throw "Failed to read conf file";
+  }
+
+  if ((err = rados.conf_parse_argv(argc, argv)) < 0) {
+    cerr << "Failed to parse argv: " << strerror(-err) << endl;
+    throw "Failed to parse argv";
+  }
 
   if ((err = rados.connect()) < 0) {
     cerr << "Failed to connect: " << strerror(-err) << endl;
@@ -312,7 +320,7 @@ static void _main(int argc, const char *argv[]) {
       const auto &bench_item = p.first;
       const auto &obj_names = p.second;
       cout << "Benching " << settings.mode << " " << bench_item << endl;
-      do_bench(settings.secs, obj_names, ioctx);
+      do_bench(settings.secs, obj_names, ioctx, settings.block_size);
     }
   } catch (...) {
     rados.watch_flush();
