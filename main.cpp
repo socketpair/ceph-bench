@@ -34,7 +34,7 @@ template <class T> static uint64_t dur2nsec(const T &dur) {
 
 template <class T>
 static void print_breakdown(const vector<T> &summary, size_t thread_count,
-                            size_t blocksize) {
+                            size_t block_size) {
 
   T totaltime(0);
 
@@ -69,14 +69,14 @@ static void print_breakdown(const vector<T> &summary, size_t thread_count,
   T sumtime(0);
   const size_t maxbarsize = 30;
 
-  auto x = [blocksize](size_t count, T dur) -> void {
+  auto x = [block_size](size_t count, T dur) -> void {
     cout << " cnt=" << count;
     cout << ", ";
     cout << (count / dur2sec(dur)) << " IOPS";
     cout << ", ";
-    cout << (count * blocksize / (dur2sec(dur) * 1000000.0)) << " MB/s";
+    cout << (count * block_size / (dur2sec(dur) * 1000000.0)) << " MB/s";
     cout << ", ";
-    cout << (count * blocksize * 8 / (dur2sec(dur) * 1000000.0)) << " Mb/s";
+    cout << (count * block_size * 8 / (dur2sec(dur) * 1000000.0)) << " Mb/s";
   };
 
   for (const auto &p : dur2count) {
@@ -132,7 +132,7 @@ static void _do_bench(unsigned int secs, const string &obj_name, IoCtx &ioctx,
   bar2.append(ceph::buffer::create(block_size));
   fill_urandom(bar2.c_str(), block_size);
 
-  if (bar1 == bar2)
+  if (bar1.contents_equal(bar2))
     throw "You are looser";
 
   //  utime_t end = ceph_clock_now(); ?!
@@ -141,8 +141,19 @@ static void _do_bench(unsigned int secs, const string &obj_name, IoCtx &ioctx,
   try {
     while (b <= stop) {
       abort_if_signalled();
-      if (ioctx.write_full(obj_name, ops->size() % 2 ? bar1 : bar2) < 0)
-        throw "Write error";
+
+      {
+        unique_ptr<AioCompletion, void (*)(AioCompletion *)> compl2(
+            Rados::aio_create_completion(NULL, NULL, NULL),
+            [](AioCompletion *x) { x->release(); });
+
+        if (ioctx.aio_write_full(obj_name, compl2.get(),
+                                 (ops->size() % 2) ? bar1 : bar2) < 0)
+          throw "Write error";
+
+        if (compl2->wait_for_safe() < 0)
+          throw "Error waiting to be safe";
+      }
       const auto b2 = steady_clock::now();
       ops->push_back(b2 - b);
       b = b2;
@@ -232,7 +243,7 @@ static void _main(int argc, const char *argv[]) {
 
   settings.secs = 10;
   settings.threads = 1;
-  settings.block_size = 4096;
+  settings.block_size = 4096 * 1024;
 
   Rados rados;
   int err;
@@ -327,6 +338,9 @@ static void _main(int argc, const char *argv[]) {
     throw;
   }
   rados.watch_flush();
+
+  // rados_ioctx_destroy(io);
+  // rados_shutdown(cluster);
 }
 
 int main(int argc, const char *argv[]) {
