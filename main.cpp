@@ -6,7 +6,11 @@
 #include <map>
 #include <set>
 #include <string>
+#ifdef YA_PIDOR
+#include <fstream>
+#else
 #include <sys/random.h>
+#endif
 #include <thread>
 #include <vector>
 
@@ -108,6 +112,13 @@ static void print_breakdown(const vector<T> &summary, size_t thread_count,
 
 static void fill_urandom(void *buf_, size_t len) {
   char *buf = static_cast<char *>(buf_);
+
+#ifdef YA_PIDOR
+  ifstream infile;
+  infile.exceptions(ifstream::failbit | ifstream::badbit);
+  infile.open("/dev/urandom", ios::binary | ios::in);
+  infile.read(buf, len);
+#else
   while (len) {
     ssize_t res;
     if ((res = getrandom(buf, len, 0)) == -1)
@@ -116,6 +127,7 @@ static void fill_urandom(void *buf_, size_t len) {
     buf += res;
     len -= res;
   }
+#endif
 }
 
 // May be called in a thread.
