@@ -1,3 +1,10 @@
+
+ifeq ($(ya_pidor),true)
+CXXFLAGS += -DYA_PIDOR
+endif
+
+
+
 # -fsanitize=undefined
 CXXFLAGS += -std=c++11 -O3 -Wall -Wextra -I/usr/include/rados -I/usr/include/jsoncpp
 #-Wa,-adhln -g
