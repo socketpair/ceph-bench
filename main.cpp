@@ -1,6 +1,7 @@
 #include <chrono>
 #include <cmath>
 #include <csignal>
+#include <cstdlib>
 #include <iostream>
 #include <librados.hpp>
 #include <map>
@@ -12,6 +13,7 @@
 #include <sys/random.h>
 #endif
 #include <thread>
+#include <getopt.h>
 #include <vector>
 #include <system_error>
 
@@ -228,35 +230,116 @@ static void do_bench(unsigned int secs, const vector<string> &names,
   print_breakdown(summary, names.size(), block_size);
 }
 
-static void _main(int argc, const char *argv[]) {
-  struct {
-    string pool;
-    string mode;
-    string specific_bench_item;
-    unsigned int threads;
-    unsigned int secs;
-    size_t block_size;
-  } settings;
+class Settings {
+public:
+  Settings(int argc, const char* const* argv)
+      : mode("osd"), block_size(4096), threads(1), secs(10) {
 
-  switch (argc) {
-  case 3:
-    settings.pool = argv[1];
-    settings.mode = argv[2];
-    break;
-  case 4:
-    settings.pool = argv[1];
-    settings.mode = argv[2];
-    settings.specific_bench_item = argv[3];
-    break;
-  default:
-    cerr << "Usage: " << argv[0]
-         << " [poolname] [mode=host|osd] <specific item name to test>" << endl;
-    throw "Wrong cmdline";
+    static const struct ::option long_opts[] = {
+        {"help", no_argument, nullptr, 'h'},
+        {"mode", required_argument, nullptr, 'm'},
+        {"pool", required_argument, nullptr, 'p'},
+        {"secs", required_argument, nullptr, 'w'},
+        {"size", required_argument, nullptr, 's'},
+        {"threads", required_argument, nullptr, 't'},
+        {nullptr,  no_argument, nullptr, 0},
+    };
+
+    if (argc <1) abort();
+
+    return;
+
+    int res;
+    while ((res = getopt_long(argc, const_cast<char* const*>(argv), "hm:p:w:s:t:", long_opts, nullptr)) != -1) {
+      switch (res) {
+      case '?':
+        help(argv[0], cerr);
+        cerr << "Commandline error." << endl;
+        quick_exit(1);
+      case 'h':
+        help(argv[0], cout);
+        quick_exit(0);
+      case 'm':
+        mode = optarg;
+        if (mode != "osd" and mode != "host")
+          throw "Wrong mode";
+        break;
+      case 'p':
+        pool = optarg;
+        if (pool.empty())
+          throw "Pool can not be empty";
+        break;
+      case 'w': {
+        char *end;
+        errno = 0;
+        secs = strtoul(optarg, &end, 10);
+        if (*end || secs == 0 || secs > 3600 || errno)
+          throw "secs parse error";
+      } break;
+      case 's': {
+        char *end;
+        errno = 0;
+        block_size = strtoul(optarg, &end, 10);
+        if (*end || block_size == 0 || block_size > 4096 * 1024 || errno)
+          throw "blocksize parse error";
+      } break;
+
+      case 't': {
+        char *end;
+        errno = 0;
+        threads = strtoul(optarg, &end, 10);
+        if (*end || threads == 0 || threads > 128 || errno)
+          throw "threads parse error";
+      } break;
+      default:
+        abort();
+      }
+    }
+    if (pool.empty()) { cerr<<"Please specify pool."<<endl; help(argv[0], cerr); quick_exit(1);}
   }
 
-  settings.secs = 10;
-  settings.threads = 1;
-  settings.block_size = 4096 * 1024;
+  static void help(const char *name, ostream &stream) {
+    stream << "Usage:" << endl;
+    stream << name << " <options> [NAME]" << endl;
+    stream << endl;
+    stream << "NAME              Optional. The name of the item to test, like "
+              "`osd.42` or `somehost`."
+           << endl;
+    stream << "-h, --help        Show this help." << endl;
+    stream << "-m, --mode MODE   `osd` or `host`. Default: `osd`" << endl;
+    stream << "-p, --pool POOL   Required. The name of the pool. You have to "
+              "use pool with size=1."
+           << endl;
+    stream
+        << "-s, --size SIZE   Write size in bytes. Default: 4096. Min: 1, Max: "
+        << 4096 * 1024 << "." << endl;
+    stream << "-t, --threads N   The number of threads. Default: 1. Min: 1, "
+              "Max: 128."
+           << endl;
+    stream << "-w, --secs N      Absolute timeout of the test in seconds. "
+              "Default: 10. Min: 1, Max: 3600."
+           << endl;
+    stream << endl;
+    stream << "This test actually does not require admin rights for running. "
+              "But now requires for code simplicity."
+           << endl;
+    stream << "Please ask all questions at <socketpair@gmail.com> or Telegram "
+              "account @socketpair."
+           << endl;
+  }
+
+  string specific_bench_item;
+  string mode; // TODO: enum
+  string pool;
+  size_t block_size;
+  unsigned int threads;
+  unsigned int secs;
+};
+
+static void _main(int argc,  const char* const* argv) {
+  const Settings settings(argc, argv);
+
+  // settings.show();
 
   Rados rados;
   int err;
@@ -270,7 +353,7 @@ static void _main(int argc, const char *argv[]) {
     throw "Failed to read conf file";
   }
 
-  if ((err = rados.conf_parse_argv(argc, argv)) < 0) {
+  if ((err = rados.conf_parse_argv(argc, const_cast<const char**>(argv))) < 0) {
     cerr << "Failed to parse argv: " << strerror(-err) << endl;
     throw "Failed to parse argv";
   }
