@@ -3,6 +3,7 @@
 #include <csignal>
 #include <iostream>
 #include <librados.hpp>
+#include <iomanip>
 #include <map>
 #include <set>
 #include <string>

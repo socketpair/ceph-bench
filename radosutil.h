@@ -3,16 +3,14 @@
 #include <memory>
 #include <set>
 #include <string>
+#include <librados_fwd.hpp>
 
 namespace Json {
-class Reader;
-class FastWriter;
-class Value;
+    class Reader;
+    class FastWriter;
+    class Value;
 } // namespace Json
 
-namespace librados {
-class Rados;
-}
 
 class RadosUtils {
 public:

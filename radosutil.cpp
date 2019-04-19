@@ -63,7 +63,7 @@ set<unsigned int> RadosUtils::get_osds(const string &pool) {
 
   set<unsigned int> osds;
 
-  for (const auto &pg : pgs) {
+  for (const auto &pg : pgs["pg_stats"]) {
     const auto &primary = pg["acting_primary"];
     if (!primary.isNumeric())
       throw "Failed to get acting_primary";

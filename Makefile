@@ -6,9 +6,9 @@ endif
 
 
 # -fsanitize=undefined
-CXXFLAGS += -std=c++11 -O3 -Wall -Wextra -I/usr/include/rados -I/usr/include/jsoncpp
+CXXFLAGS += -std=c++11 -O3 -Wall -Wextra -I/usr/include/rados $(shell pkg-config --cflags jsoncpp )
 #-Wa,-adhln -g
-LDFLAGS += -pthread -lrados -ljsoncpp -lstdc++ -lm
+LDFLAGS += -pthread -lrados $(shell pkg-config --libs jsoncpp ) -lstdc++ -lm -lceph-common
 
 #CC=clang-6.0
 
